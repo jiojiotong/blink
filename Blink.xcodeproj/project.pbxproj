@@ -920,6 +920,7 @@
 		BD9514342B4F662100A7BEBE /* FileProviderReplicatedEnumerator.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FileProviderReplicatedEnumerator.swift; sourceTree = "<group>"; };
 		BD98AC83260BD8DC00B4E6A1 /* SSHAgentAdd.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAgentAdd.swift; sourceTree = "<group>"; };
 		BD98AC94260BE20000B4E6A1 /* SSHDefaultAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHDefaultAgent.swift; sourceTree = "<group>"; };
+		BD9A10012F45000100C0FFEE /* ExportedSymbols.exp */ = {isa = PBXFileReference; lastKnownFileType = text; path = ExportedSymbols.exp; sourceTree = "<group>"; };
 		BD9BF7E3262A6B0300B02074 /* SOCKS.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SOCKS.swift; sourceTree = "<group>"; };
 		BD9BF7E8262A6B0F00B02074 /* SOCKSTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SOCKSTests.swift; sourceTree = "<group>"; };
 		BD9EA1C92718E19000874007 /* BlinkFileProviderExtensionUI.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BlinkFileProviderExtensionUI.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -2381,6 +2382,7 @@
 				BD33F77F2AAA426D00CD16EE /* mosh */,
 				07FAB8E925C8E6C500E1CC2C /* ssh */,
 				D2334D1221495DAE00D26AC3 /* udptunnel */,
+				BD9A10012F45000100C0FFEE /* ExportedSymbols.exp */,
 				D2F330D320A6F1DF0074ADD7 /* clear.m */,
 				D2F330CB20A6D98C0074ADD7 /* config.m */,
 				D264D2B528F84724002B1B14 /* whatsnew.m */,
@@ -5311,6 +5313,7 @@
 				DEVELOPMENT_TEAM = A2H2CL32AG;
 				ENABLE_BITCODE = NO;
 				ENABLE_TESTABILITY = YES;
+				EXPORTED_SYMBOLS_FILE = Blink/Commands/ExportedSymbols.exp;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
@@ -5362,6 +5365,7 @@
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = A2H2CL32AG;
 				ENABLE_BITCODE = NO;
+				EXPORTED_SYMBOLS_FILE = Blink/Commands/ExportedSymbols.exp;
 				GCC_PREPROCESSOR_DEFINITIONS = "";
 				INFOPLIST_FILE = Blink/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Blink Shell";
