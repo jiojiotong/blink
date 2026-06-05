@@ -71,6 +71,11 @@ NSString *__iCloudsDriveDocumentsPath = nil;
 
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *path = [fm containerURLForSecurityApplicationGroupIdentifier:groupID].path;
+    if (path.length == 0) {
+      NSString *supportPath = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject];
+      path = [supportPath stringByAppendingPathComponent:@"BlinkGroup"];
+      [self _ensureFolderAtPath:path];
+    }
     __groupContainerPath = path;
   }
   return __groupContainerPath;
@@ -81,7 +86,11 @@ NSString *__iCloudsDriveDocumentsPath = nil;
   if (__iCloudsDriveDocumentsPath == nil) {
     NSString *iCloudID = [XCConfig infoPlistFullCloudID];
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *path = [[fm URLForUbiquityContainerIdentifier:iCloudID] URLByAppendingPathComponent:@"Documents"].path;
+    NSURL *iCloudURL = [fm URLForUbiquityContainerIdentifier:iCloudID];
+    if (iCloudURL == nil) {
+      return nil;
+    }
+    NSString *path = [iCloudURL URLByAppendingPathComponent:@"Documents"].path;
     [self _ensureFolderAtPath:path];
     __iCloudsDriveDocumentsPath = path;
   }
@@ -91,8 +100,12 @@ NSString *__iCloudsDriveDocumentsPath = nil;
 
 + (void)linkICloudDriveIfNeeded
 {
+  NSString *iCloudDocuments = [self iCloudDriveDocuments];
+  if (iCloudDocuments.length == 0) {
+    return;
+  }
   [self _linkAtPath:[[self homePath] stringByAppendingPathComponent:@"iCloud"]
-    destinationPath:[self iCloudDriveDocuments]];
+    destinationPath:iCloudDocuments];
 }
 
 + (void)linkDocumentsIfNeeded {
