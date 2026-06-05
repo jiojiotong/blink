@@ -2,10 +2,24 @@ name: Build IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      configuration:
+        description: Build configuration
+        required: true
+        default: Release
+        type: choice
+        options:
+          - Release
+          - Debug
+
+permissions:
+  contents: write
 
 jobs:
   build-ipa:
     runs-on: macos-15
+    env:
+      BUILD_CONFIGURATION: ${{ github.event.inputs.configuration || 'Release' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -32,38 +46,186 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: ./get_resources.sh
 
-      - name: Copy xcconfig
-        run: cp template_setup.xcconfig developer_setup.xcconfig
+      - name: Install signing assets
+        env:
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ -z "$IOS_CERTIFICATE_P12_BASE64" ] || [ -z "$IOS_CERTIFICATE_PASSWORD" ] || [ -z "$IOS_PROVISION_PROFILE_BASE64" ]; then
+            printf 'Missing signing secrets. Set IOS_CERTIFICATE_P12_BASE64, IOS_CERTIFICATE_PASSWORD, and IOS_PROVISION_PROFILE_BASE64.\n' >&2
+            exit 1
+          fi
 
-      - name: Build unsigned app
+          CERTIFICATE_PATH="$RUNNER_TEMP/signing_certificate.p12"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          printf '%s' "$IOS_PROVISION_PROFILE_BASE64" | base64 -D > "$PROFILE_PATH"
+
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$PROFILE_PLIST")
+          APP_IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$PROFILE_PLIST")
+          BUNDLE_ID=${APP_IDENTIFIER#${TEAM_ID}.}
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          {
+            echo "PROFILE_NAME=$PROFILE_NAME"
+            echo "TEAM_ID=$TEAM_ID"
+            echo "BUNDLE_ID=$BUNDLE_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Create signing xcconfig
+        run: |
+          cp template_setup.xcconfig developer_setup.xcconfig
+          {
+            echo ""
+            echo "TEAM_ID = $TEAM_ID"
+            echo "BUNDLE_ID = $BUNDLE_ID"
+            echo "GROUP_ID = $BUNDLE_ID"
+            echo "CLOUD_ID = $BUNDLE_ID"
+            echo "KEYCHAIN_ID1 = $BUNDLE_ID"
+          } >> developer_setup.xcconfig
+
+      - name: Archive signed app
         run: |
           set -o pipefail
+          set +e
+          rm -rf build/DerivedData build/Blink.xcarchive build/export ExportOptions.plist
           xcodebuild \
             -project Blink.xcodeproj \
             -scheme Blink \
+            -configuration "$BUILD_CONFIGURATION" \
             -sdk iphoneos \
-            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Blink.xcarchive \
             -derivedDataPath build/DerivedData \
-            clean build \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
             IPHONEOS_DEPLOYMENT_TARGET=16.1 \
-            CODE_SIGN_IDENTITY= \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=YES \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            ONLY_ACTIVE_ARCH=NO \
+            clean archive 2>&1 | tee xcodebuild.log
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            {
+              echo "## xcodebuild archive failed"
+              echo
+              echo "### Errors"
+              echo '```text'
+              grep -n -E "error:|Undefined symbols|ld:|clang: error|SwiftCompile|CodeSign|Provisioning profile|Signing" xcodebuild.log || true
+              echo '```'
+              echo
+              echo "### Last log lines"
+              echo '```text'
+              tail -n 120 xcodebuild.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$STATUS"
+          fi
 
-      - name: Package unsigned IPA
+      - name: Export signed IPA
         run: |
-          APP_PATH=$(find build/DerivedData/Build/Products -path '*/Debug-iphoneos/Blink.app' -type d -maxdepth 5 | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            printf 'Blink.app was not found\n' >&2
+          set -o pipefail
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>compileBitcode</key>
+            <false/>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key>
+              <string>$PROFILE_NAME</string>
+            </dict>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/Blink.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist 2>&1 | tee -a xcodebuild.log
+
+      - name: Package app artifacts
+        run: |
+          IPA_PATH=$(ls build/export/*.ipa 2>/dev/null | /usr/bin/head -n 1)
+          APP_PATH=$(ls -d build/Blink.xcarchive/Products/Applications/*.app 2>/dev/null | /usr/bin/head -n 1)
+          if [ -z "$IPA_PATH" ]; then
+            printf 'No .ipa file found\n' >&2
             exit 1
           fi
-          mkdir -p Payload
-          cp -R "$APP_PATH" Payload/
-          zip -qry Blink-unsigned.ipa Payload
+          cp "$IPA_PATH" Blink-signed-device.ipa
+          if [ -n "$APP_PATH" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" Blink-signed-device-app.zip
+          fi
 
-      - name: Upload IPA
+      - name: Upload signed app
         uses: actions/upload-artifact@v4
         with:
-          name: Blink-unsigned-ipa
-          path: Blink-unsigned.ipa
+          name: Blink-signed-app
+          retention-days: 14
+          path: |
+            Blink-signed-device.ipa
+            Blink-signed-device-app.zip
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ios-signed-${{ github.run_number }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            Blink-signed-device.ipa \
+            Blink-signed-device-app.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "iOS signed device build #${GITHUB_RUN_NUMBER}" \
+            --notes "Signed ad-hoc iOS build for commit ${GITHUB_SHA}. Install only on devices included in the provisioning profile."
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blink-xcodebuild-log
+          retention-days: 14
+          path: xcodebuild.log
+
+      - name: Build summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Signed iOS Build
+
+          Artifact: \`Blink-signed-app\`
+
+          Release: \`ios-signed-${GITHUB_RUN_NUMBER}\`
+
+          Bundle ID: \`$BUNDLE_ID\`
+
+          Profile: \`$PROFILE_NAME\`
+          EOF
