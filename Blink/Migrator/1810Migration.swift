@@ -65,6 +65,14 @@ class MigrationFileProviderReplicatedExtension: MigrationStep {
   }
 
   private func deleteFileProviderStorage() {
+    guard let plugInsURL = Bundle.main.builtInPlugInsURL,
+          let plugIns = try? FileManager.default.contentsOfDirectory(at: plugInsURL,
+                                                                     includingPropertiesForKeys: nil,
+                                                                     options: []),
+          plugIns.contains(where: { $0.pathExtension == "appex" }) else {
+      return
+    }
+
     // Clean up the old File Provider path
     let fileProviderURL = NSFileProviderManager.default.documentStorageURL
 
