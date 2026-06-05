@@ -156,11 +156,11 @@ jobs:
             exit 1
           fi
 
-          SYMBOLS_FILE="$RUNNER_TEMP/blink-main-symbols.txt"
-          /usr/bin/python3 -c "import plistlib; commands = plistlib.load(open('Resources/blinkCommandsDictionary.plist', 'rb')); print('\n'.join(spec[1] for name, spec in sorted(commands.items()) if len(spec) >= 2 and spec[0] == 'MAIN'))" > "$SYMBOLS_FILE"
+          SYMBOLS_FILE="Blink/Commands/ExportedSymbols.exp"
 
           missing=0
           while IFS= read -r symbol; do
+            symbol="${symbol#_}"
             [ -n "$symbol" ] || continue
             if ! nm -gU "$APP_PATH/Blink" | grep -q " _${symbol}$"; then
               printf 'Missing MAIN command symbol: %s\n' "$symbol" >&2
